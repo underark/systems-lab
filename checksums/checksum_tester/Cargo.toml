@@ -1,0 +1,7 @@
+[package]
+name = "checksum_tester"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+parity_byte = { path = "../parity_byte/" }

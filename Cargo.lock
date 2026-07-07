@@ -7,6 +7,13 @@ name = "box"
 version = "0.1.0"
 
 [[package]]
+name = "checksum_tester"
+version = "0.1.0"
+dependencies = [
+ "parity_byte",
+]
+
+[[package]]
 name = "parity_byte"
 version = "0.1.0"
 
