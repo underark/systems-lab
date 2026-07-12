@@ -20,3 +20,7 @@ version = "0.1.0"
 [[package]]
 name = "raw-u32"
 version = "0.1.0"
+
+[[package]]
+name = "vector"
+version = "0.1.0"
