@@ -6,11 +6,10 @@ use std::ptr::drop_in_place;
 
 // Must always be true:
 // length is the number of elements stored in the vector
-// 0..length elements are initialized
-// length..(capacity / size_of::<T>) elements are uninitialized
-// capacity refers to the total number of bytes assigned to the vector
-// capacity cannot exceed usize (total addressable space of the system)
-// length cannot exceed usize
+// 0 to length - 1 elements are initialized
+// length to capacity - 1 elements are uninitialized
+// capacity * size_of::<T> is the total number of allocated bytes
+// capacity * size_of::<T> cannot exceed isize::MAX
 
 pub struct Vector<T> {
     start: *mut T,
@@ -76,13 +75,16 @@ impl<T> Vector<T> {
     // failure results in unwinding
     fn allocate_memory(size: usize) -> VectorAlloc<T> {
         // SAFETY: clamping at 1 ensures that zero-sized types never request 0 bytes, which is UB
-        let t_size = size_of::<T>().min(1);
+        let t_size = size_of::<T>().clamp(1, isize::MAX as usize);
         let align = align_of::<T>();
 
         // from_size_align will panic at unwrap() if certain conditions are untrue (see docs)
         // this is only the case for values passed into from_size_align i.e. prior calculations must
         // not overflow, or else this will not be caught
-        let l = Layout::from_size_align(t_size.saturating_mul(size), align).unwrap();
+
+        // maximum allocation size is isize::MAX because offset in methods like add() must be
+        // addressable within an isize
+        let l = Layout::from_size_align((t_size * size).max(isize::MAX as usize), align).unwrap();
         // SAFETY: pointer returned from alloc may be null. Calling handle_alloc_error for failed states
         unsafe {
             let p = alloc(l);
@@ -98,7 +100,9 @@ impl<T> Vector<T> {
     }
 
     fn migrate_vector(&mut self) {
-        let new_size = self.length.saturating_mul(2);
+        // maximum allocation size is isize::MAX because offset in methods like add() must be
+        // addressable within an isize
+        let new_size = (self.length * 2).max(isize::MAX as usize);
         let alloc: VectorAlloc<T> = Vector::allocate_memory(new_size);
 
         // SAFETY: iterating from 0..length - 1 because these elements should be treated as
