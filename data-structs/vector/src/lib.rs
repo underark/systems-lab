@@ -1,20 +1,29 @@
-use std::alloc::{Layout, alloc, dealloc};
-use std::fmt::{self};
+use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
+use std::fmt::Result as FmtResult;
+use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::ptr::drop_in_place;
 
 pub struct Vector<T> {
     start: *mut T,
+    current_layout: Layout, // dealloc() expects to be called with the same layout that was used to
+    // alloc the memory
     capacity: usize,
     length: usize,
     phantom: PhantomData<T>,
 }
 
+struct VectorAlloc<T> {
+    start: *mut T,
+    layout: Layout,
+}
+
 impl<T> Vector<T> {
     pub fn new() -> Vector<T> {
-        let p: *mut T = Vector::allocate_memory(1);
+        let alloc: VectorAlloc<T> = Vector::allocate_memory(1);
         Vector {
-            start: p,
+            start: alloc.start,
+            current_layout: alloc.layout,
             capacity: 1,
             length: 0,
             phantom: PhantomData,
@@ -45,31 +54,50 @@ impl<T> Vector<T> {
         }
     }
 
-    pub fn allocate_memory(size: usize) -> *mut T {
-        let l = Layout::from_size_align(size_of::<T>() * size, align_of::<T>()).unwrap();
-        unsafe { alloc(l).cast() }
+    // NOTE: it is possible for this function to fail, but no Result<> type is returned because all
+    // failure results in unwinding
+    fn allocate_memory(size: usize) -> VectorAlloc<T> {
+        let t_size = size_of::<T>();
+        let align = align_of::<T>();
+
+        // from_size_align will panic with a debug error message if certain conditions (see docs)
+        // are not true. Would rather fail fast if one of these invariants is not true
+        let l = Layout::from_size_align(t_size * size, align).unwrap();
+        // SAFETY: pointer returned from alloc may be null. Calling handle_alloc_error for failed states
+        unsafe {
+            let p = alloc(l);
+            if p.is_null() {
+                handle_alloc_error(l);
+            } else {
+                VectorAlloc {
+                    start: p.cast(),
+                    layout: l,
+                }
+            }
+        }
     }
 
-    pub fn migrate_vector(&mut self) {
-        let layout =
-            Layout::from_size_align(size_of::<T>() * self.capacity, align_of::<T>()).unwrap();
+    fn migrate_vector(&mut self) {
         let new_size = self.capacity * 2;
-        let new_p: *mut T = Vector::allocate_memory(new_size);
-        // This assumes that the vector is full before reassigning - consider changing this
-        // assumption at some point so that it reallocates earlier
+        let alloc: VectorAlloc<T> = Vector::allocate_memory(new_size);
+
+        // SAFETY: iterating from 0..length - 1 because these elements should be treated as
+        // initialized - n >= length elements may contain moved out data
+        // SAFETY: using previously stored layout ensures matching layout for a given alloc is used
         unsafe {
-            for i in 0..self.capacity {
-                new_p.add(i).write(self.start.add(i).read());
+            for i in 0..self.length {
+                alloc.start.add(i).write(self.start.add(i).read());
             }
-            dealloc(self.start.cast(), layout);
+            dealloc(self.start.cast(), self.current_layout);
         }
-        self.start = new_p;
+        self.start = alloc.start;
+        self.current_layout = alloc.layout;
         self.capacity = new_size;
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Vector<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl<T: Debug> Debug for Vector<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         unsafe {
             f.debug_list()
                 .entries((0..self.length).map(|i| &*self.start.add(i)))
