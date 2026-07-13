@@ -4,6 +4,14 @@ use std::fmt::{Debug, Formatter};
 use std::marker::PhantomData;
 use std::ptr::drop_in_place;
 
+// Must always be true:
+// length is the number of elements stored in the vector
+// 0..length elements are initialized
+// length..(capacity / size_of::<T>) elements are uninitialized
+// capacity refers to the total number of bytes assigned to the vector
+// capacity cannot exceed usize (total addressable space of the system)
+// length cannot exceed usize
+
 pub struct Vector<T> {
     start: *mut T,
     current_layout: Layout, // dealloc() expects to be called with the same layout that was used to
@@ -71,9 +79,10 @@ impl<T> Vector<T> {
         let t_size = size_of::<T>().min(1);
         let align = align_of::<T>();
 
-        // from_size_align will panic with a debug error message if certain conditions (see docs)
-        // are not true. Would rather fail fast if one of these invariants is not true
-        let l = Layout::from_size_align(t_size * size, align).unwrap();
+        // from_size_align will panic at unwrap() if certain conditions are untrue (see docs)
+        // this is only the case for values passed into from_size_align i.e. prior calculations must
+        // not overflow, or else this will not be caught
+        let l = Layout::from_size_align(t_size.saturating_mul(size), align).unwrap();
         // SAFETY: pointer returned from alloc may be null. Calling handle_alloc_error for failed states
         unsafe {
             let p = alloc(l);
@@ -89,7 +98,7 @@ impl<T> Vector<T> {
     }
 
     fn migrate_vector(&mut self) {
-        let new_size = self.capacity * 2;
+        let new_size = self.length.saturating_mul(2);
         let alloc: VectorAlloc<T> = Vector::allocate_memory(new_size);
 
         // SAFETY: iterating from 0..length - 1 because these elements should be treated as
