@@ -35,6 +35,7 @@ impl<T> Vector<T> {
             self.migrate_vector();
         }
 
+        // SAFETY: be careful of off by one errors. write to self.length; read from self.length - 1
         unsafe {
             self.start.add(self.length).write(t);
         }
@@ -47,9 +48,10 @@ impl<T> Vector<T> {
             return None;
         }
 
+        // SAFETY: be careful of off by one errors. write to self.length; read from self.length - 1
         unsafe {
-            let p = self.start.add(self.length).read();
             self.length -= 1;
+            let p = self.start.add(self.length).read();
             Some(p)
         }
     }
