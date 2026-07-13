@@ -49,6 +49,8 @@ impl<T> Vector<T> {
         }
 
         // SAFETY: be careful of off by one errors. write to self.length; read from self.length - 1
+        // SAFETY: T returned from pop is moved out of allocation in vector but still exists in
+        // memory; self.length + 1 must be treated as uninitialized
         unsafe {
             self.length -= 1;
             let p = self.start.add(self.length).read();
@@ -115,5 +117,6 @@ impl<T> Drop for Vector<T> {
                 drop_in_place(self.start.add(i));
             }
         }
+        unsafe { dealloc(self.start.cast(), self.current_layout) };
     }
 }
