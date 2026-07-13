@@ -31,6 +31,12 @@ impl<T> Vector<T> {
     }
 
     pub fn push(&mut self, t: T) {
+        // returning early prevents allocations for zero-sized types
+        if size_of::<T>() == 0 {
+            self.length += 1;
+            return;
+        }
+
         if self.length >= self.capacity {
             self.migrate_vector();
         }
@@ -61,7 +67,8 @@ impl<T> Vector<T> {
     // NOTE: it is possible for this function to fail, but no Result<> type is returned because all
     // failure results in unwinding
     fn allocate_memory(size: usize) -> VectorAlloc<T> {
-        let t_size = size_of::<T>();
+        // SAFETY: clamping at 1 ensures that zero-sized types never request 0 bytes, which is UB
+        let t_size = size_of::<T>().min(1);
         let align = align_of::<T>();
 
         // from_size_align will panic with a debug error message if certain conditions (see docs)
@@ -104,6 +111,8 @@ impl<T: Debug> Debug for Vector<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         unsafe {
             f.debug_list()
+                // NOTE: a zero-sized type will never actually increment the pointer (count *
+                // size_of::<T>()) but print the first and only element n times
                 .entries((0..self.length).map(|i| &*self.start.add(i)))
                 .finish()
         }
