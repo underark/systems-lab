@@ -3,19 +3,11 @@ use std::error::Error;
 use std::fmt::{Debug, Formatter};
 use std::fmt::{Display, Result as FmtResult};
 use std::marker::PhantomData;
-use std::ptr::drop_in_place;
-
-// Must always be true:
-// length is the number of elements stored in the vector
-// 0 to length - 1 elements are initialized
-// length to capacity - 1 elements are uninitialized
-// capacity * size_of::<T> is the total number of allocated bytes
-// capacity * size_of::<T> cannot exceed isize::MAX
 use std::panic;
+use std::ptr::{NonNull, drop_in_place};
 
 pub struct Vector<T> {
-    start: *mut T,
-    layout: Layout,
+    start: NonNull<T>,
     capacity: usize,
     length: usize,
     phantom: PhantomData<T>,
@@ -38,16 +30,14 @@ impl Display for OverflowError {
 impl Error for OverflowError {}
 
 impl<T> Vector<T> {
-    pub fn new(elements: usize) -> Vector<T> {
+    pub fn new() -> Vector<T> {
         if size_of::<T>() == 0 {
             panic!("vector cannot be initialized with zero-size type");
         }
 
-        let allocated = Vector::<T>::allocate_memory(elements).unwrap();
         Vector {
-            start: allocated.ptr.cast(),
-            layout: allocated.layout,
-            capacity: elements,
+            start: NonNull::dangling(),
+            capacity: 0,
             length: 0,
             phantom: PhantomData,
         }
@@ -95,10 +85,12 @@ impl<T> Vector<T> {
     fn migrate_vector(&mut self) -> Result<(), Box<dyn Error>> {
         let new_size = self.capacity.checked_mul(2).ok_or(OverflowError {})?;
         let new_allocation = Vector::<T>::allocate_memory(new_size)?;
-        // question: after this returns: who owns the elements?
         self.move_elements_to(new_allocation.ptr);
+        // SAFETY: current 'capacity' value was successfully used to obtain Layout of current cap
+        // should be sound to obtain Layout with same values
         unsafe {
-            dealloc(self.start.cast(), self.layout);
+            let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+            dealloc(self.start.as_ptr().cast(), layout);
         }
         self.update_vec_metadata(new_size, new_allocation);
         Ok(())
@@ -115,15 +107,15 @@ impl<T> Vector<T> {
 
     fn update_vec_metadata(&mut self, new_cap: usize, new_alloc: VecAlloc) {
         self.capacity = new_cap;
-        self.start = new_alloc.ptr.cast();
-        self.layout = new_alloc.layout;
+        self.start = NonNull::new(new_alloc.ptr.cast()).unwrap();
     }
 }
 
 impl<T: Debug> Debug for Vector<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_list()
-            .entries((0..self.length).map(|i| unsafe { &*self.start.add(i) }))
+            // SAFETY:
+            .entries((0..self.length).map(|i| unsafe { &*self.start.add(i).as_ptr() }))
             .finish()
     }
 }
@@ -132,9 +124,10 @@ impl<T> Drop for Vector<T> {
     fn drop(&mut self) {
         unsafe {
             for i in 0..self.length {
-                drop_in_place(self.start.add(i));
+                drop_in_place(self.start.add(i).as_ptr());
             }
-            dealloc(self.start.cast(), self.layout);
+            let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+            dealloc(self.start.as_ptr().cast(), layout);
         }
     }
 }
