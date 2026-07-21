@@ -1,7 +1,6 @@
 use std::alloc::{Layout, alloc, dealloc, handle_alloc_error};
-use std::error::Error;
+use std::fmt::Result as FmtResult;
 use std::fmt::{Debug, Formatter};
-use std::fmt::{Display, Result as FmtResult};
 use std::marker::PhantomData;
 use std::ptr::{NonNull, drop_in_place};
 
@@ -40,10 +39,6 @@ impl<T> Vector<T> {
     // elements length..capacity - 1 are uninitialized
     // absolute max number of elements is <= isize::MAX / size_of::<T>()
     pub fn push(&mut self, t: T) {
-        if self.capacity == 0 {
-            self.grow_vector();
-        }
-
         if self.length == self.capacity {
             self.grow_vector();
         }
@@ -68,16 +63,55 @@ impl<T> Vector<T> {
             self.grow_vector();
         }
 
+        self.shuffle_one_higher(index);
+        unsafe { self.start.add(index).write(e) };
+    }
+
+    fn grow_vector(&mut self) {
+        // ZST should not try to grow the vector
+        // growing the vector means that it is necessarily at absolute max capacity for ZST
+        assert!(size_of::<T>() != 0);
+
+        let new_size = if self.capacity == 0 {
+            1
+        } else {
+            self.capacity
+                .checked_mul(2)
+                .expect("overflow usize on requested buffer size")
+        };
+
+        let new_allocation = Vector::<T>::allocate_memory(new_size);
+        if !self.is_empty() {
+            self.move_elements_to(new_allocation);
+            // SAFETY: current 'capacity' value was successfully used to obtain Layout of current cap
+            // should be sound to obtain Layout with same values
+            unsafe {
+                let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+                dealloc(self.start.as_ptr().cast(), layout);
+            }
+        }
+        self.update_vec_metadata(new_size, new_allocation);
+    }
+
+    fn move_elements_to(&mut self, new_ptr: *mut u8) {
+        // SAFETY: elements 0 to n-1 are valid Ts and read() will move ownership to the new pointer
+        unsafe {
+            let t_ptr: *mut T = new_ptr.cast();
+            for i in 0..self.length {
+                t_ptr.add(i).write(self.start.add(i).read());
+            }
+        }
+    }
+
+    fn shuffle_one_higher(&mut self, low_index: usize) {
         self.length += 1;
-        for i in 0..(self.length - index - 1) {
+        for i in 0..(self.length - low_index) {
             unsafe {
                 self.start
                     .add(self.length - i)
                     .write(self.start.add(self.length - i - 1).read());
             }
         }
-
-        unsafe { self.start.add(index).write(e) };
     }
 
     fn allocate_memory(elements: usize) -> *mut u8 {
@@ -95,40 +129,6 @@ impl<T> Vector<T> {
                 handle_alloc_error(layout);
             }
             ptr
-        }
-    }
-
-    fn grow_vector(&mut self) {
-        // ZST should not try to grow the vector
-        // growing the vector means that it is necessarily at absolute max capacity for ZST
-        assert!(size_of::<T>() != 0);
-
-        let new_size = if self.capacity == 0 {
-            1
-        } else {
-            self.capacity
-                .checked_mul(2)
-                .expect("overflow usize on requested buffer size")
-        };
-
-        let new_allocation = Vector::<T>::allocate_memory(new_size);
-        self.move_elements_to(new_allocation);
-        // SAFETY: current 'capacity' value was successfully used to obtain Layout of current cap
-        // should be sound to obtain Layout with same values
-        unsafe {
-            let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
-            dealloc(self.start.as_ptr().cast(), layout);
-        }
-        self.update_vec_metadata(new_size, new_allocation);
-    }
-
-    fn move_elements_to(&mut self, new_ptr: *mut u8) {
-        // SAFETY: elements 0 to n-1 are valid Ts and read() will move ownership to the new pointer
-        unsafe {
-            let t_ptr: *mut T = new_ptr.cast();
-            for i in 0..self.length {
-                t_ptr.add(i).write(self.start.add(i).read());
-            }
         }
     }
 
@@ -153,8 +153,11 @@ impl<T> Drop for Vector<T> {
             for i in 0..self.length {
                 drop_in_place(self.start.add(i).as_ptr());
             }
-            let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
-            dealloc(self.start.as_ptr().cast(), layout);
+
+            if self.capacity > 0 {
+                let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+                dealloc(self.start.as_ptr().cast(), layout);
+            }
         }
     }
 }
