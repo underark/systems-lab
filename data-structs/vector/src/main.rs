@@ -2,7 +2,9 @@ use vector::Vector;
 
 fn main() {
     let mut v: Vector<u8> = Vector::new();
+    v.push(0);
     v.push(1);
-    v.insert(0, 4);
+    v.push(2);
+    v.push(3);
     println!("{:?}", v);
 }

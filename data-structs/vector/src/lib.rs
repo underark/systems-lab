@@ -59,12 +59,28 @@ impl<T> Vector<T> {
     }
 
     pub fn insert(&mut self, index: usize, e: T) {
+        assert!(index <= self.len());
+
         if self.length == self.capacity {
             self.grow_vector();
         }
 
         self.shuffle_one_higher(index);
         unsafe { self.start.add(index).write(e) };
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        assert!(index <= self.len());
+
+        unsafe {
+            let _ = self.start.add(index).read();
+            self.length -= 1;
+            for i in 0..(self.length - index) {
+                self.start
+                    .add(index + i)
+                    .write(self.start.add(index + i + 1).read());
+            }
+        }
     }
 
     fn grow_vector(&mut self) {
