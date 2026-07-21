@@ -12,17 +12,6 @@ pub struct Vector<T> {
     phantom: PhantomData<T>,
 }
 
-#[derive(Debug)]
-struct OverflowError {}
-
-impl Display for OverflowError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        write!(f, "size calculation overflowed")
-    }
-}
-
-impl Error for OverflowError {}
-
 impl<T> Vector<T> {
     pub fn new() -> Vector<T> {
         let capacity = if size_of::<T>() == 0 { isize::MAX } else { 0 };
@@ -38,14 +27,21 @@ impl<T> Vector<T> {
         self.length
     }
 
+    pub fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
     // length <= capacity
     // elements 0..length - 1 are initialized
     // elements length..capacity - 1 are uninitialized
     // absolute max number of elements is <= isize::MAX / size_of::<T>()
     pub fn push(&mut self, t: T) {
         if self.capacity == 0 {
-            let alloc = Vector::<T>::allocate_memory(1);
-            self.update_vec_metadata(1, alloc);
+            self.grow_vector();
         }
 
         if self.length == self.capacity {
@@ -65,6 +61,23 @@ impl<T> Vector<T> {
             self.length -= 1;
             unsafe { Some(self.start.add(self.length).read()) }
         }
+    }
+
+    pub fn insert(&mut self, index: usize, e: T) {
+        if self.length == self.capacity {
+            self.grow_vector();
+        }
+
+        self.length += 1;
+        for i in 0..(self.length - index - 1) {
+            unsafe {
+                self.start
+                    .add(self.length - i)
+                    .write(self.start.add(self.length - i - 1).read());
+            }
+        }
+
+        unsafe { self.start.add(index).write(e) };
     }
 
     fn allocate_memory(elements: usize) -> *mut u8 {
@@ -90,10 +103,14 @@ impl<T> Vector<T> {
         // growing the vector means that it is necessarily at absolute max capacity for ZST
         assert!(size_of::<T>() != 0);
 
-        let new_size = self
-            .capacity
-            .checked_mul(2)
-            .expect("overflow usize on requested buffer size");
+        let new_size = if self.capacity == 0 {
+            1
+        } else {
+            self.capacity
+                .checked_mul(2)
+                .expect("overflow usize on requested buffer size")
+        };
+
         let new_allocation = Vector::<T>::allocate_memory(new_size);
         self.move_elements_to(new_allocation);
         // SAFETY: current 'capacity' value was successfully used to obtain Layout of current cap
