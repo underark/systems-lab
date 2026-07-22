@@ -34,6 +34,10 @@ impl<T> Vector<T> {
         self.length == 0
     }
 
+    pub fn is_null(&self) -> bool {
+        self.capacity == 0
+    }
+
     // length <= capacity
     // elements 0..length - 1 are initialized
     // elements length..capacity - 1 are uninitialized
@@ -70,17 +74,18 @@ impl<T> Vector<T> {
         self.length += 1;
     }
 
-    pub fn remove(&mut self, index: usize) {
-        assert!(index <= self.len());
+    pub fn remove(&mut self, index: usize) -> T {
+        assert!(index < self.len());
 
         unsafe {
-            let _ = self.start.add(index).read();
+            let t = self.start.add(index).read();
             self.length -= 1;
             for i in 0..(self.length - index) {
                 self.start
                     .add(index + i)
                     .write(self.start.add(index + i + 1).read());
             }
+            t
         }
     }
 
@@ -172,7 +177,7 @@ impl<T> Drop for Vector<T> {
                 drop_in_place(self.start.add(i).as_ptr());
             }
 
-            if self.capacity > 0 {
+            if !self.is_null() {
                 let layout =
                     Layout::from_size_align(self.capacity * size_of::<T>(), align_of::<T>())
                         .unwrap();
@@ -181,3 +186,64 @@ impl<T> Drop for Vector<T> {
         }
     }
 }
+
+pub struct VecIntoIter<T> {
+    buffer: *mut T,
+    current: usize,
+    size: usize,
+    capacity: usize,
+}
+
+impl<T> Iterator for VecIntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current == self.size {
+            None
+        } else {
+            unsafe {
+                let item = self.buffer.add(self.current).read();
+                self.current += 1;
+                Some(item)
+            }
+        }
+    }
+}
+
+impl<T> Drop for VecIntoIter<T> {
+    fn drop(&mut self) {
+        unsafe {
+            for i in self.current..self.size {
+                drop_in_place(self.buffer.add(i));
+            }
+
+            if self.capacity > 0 {
+                let layout =
+                    Layout::from_size_align(self.capacity * size_of::<T>(), align_of::<T>())
+                        .expect("invalid layout request in VecIntoIter drop");
+                dealloc(self.buffer.cast(), layout);
+            }
+        }
+    }
+}
+
+impl<T> IntoIterator for Vector<T> {
+    type Item = T;
+    type IntoIter = VecIntoIter<T>;
+
+    fn into_iter(mut self) -> Self::IntoIter {
+        let i = VecIntoIter::<T> {
+            buffer: self.start.as_ptr(),
+            current: 0,
+            size: self.len(),
+            capacity: self.capacity(),
+        };
+        self.length = 0;
+        self.capacity = 0;
+        i
+    }
+}
+
+// at the end of into_inter, the vector itself will be dropped
+// 1) dropping the vector means droping the elements in the vector - which the vector no longer owns
+// 2) drop will also free the underlying memory - which the vector no longer owns
