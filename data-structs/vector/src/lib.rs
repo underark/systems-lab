@@ -67,6 +67,7 @@ impl<T> Vector<T> {
 
         self.shuffle_one_higher(index);
         unsafe { self.start.add(index).write(e) };
+        self.length += 1;
     }
 
     pub fn remove(&mut self, index: usize) {
@@ -102,7 +103,9 @@ impl<T> Vector<T> {
             // SAFETY: current 'capacity' value was successfully used to obtain Layout of current cap
             // should be sound to obtain Layout with same values
             unsafe {
-                let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+                let layout =
+                    Layout::from_size_align(self.capacity * size_of::<T>(), align_of::<T>())
+                        .unwrap();
                 dealloc(self.start.as_ptr().cast(), layout);
             }
         }
@@ -120,7 +123,6 @@ impl<T> Vector<T> {
     }
 
     fn shuffle_one_higher(&mut self, low_index: usize) {
-        self.length += 1;
         for i in 0..(self.length - low_index) {
             unsafe {
                 self.start
@@ -171,7 +173,9 @@ impl<T> Drop for Vector<T> {
             }
 
             if self.capacity > 0 {
-                let layout = Layout::from_size_align(self.capacity, align_of::<T>()).unwrap();
+                let layout =
+                    Layout::from_size_align(self.capacity * size_of::<T>(), align_of::<T>())
+                        .unwrap();
                 dealloc(self.start.as_ptr().cast(), layout);
             }
         }
