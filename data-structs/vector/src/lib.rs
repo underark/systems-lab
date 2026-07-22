@@ -8,7 +8,6 @@ pub struct Vector<T> {
     start: NonNull<T>,
     capacity: usize,
     length: usize,
-    phantom: PhantomData<T>,
 }
 
 impl<T> Vector<T> {
@@ -18,7 +17,6 @@ impl<T> Vector<T> {
             start: NonNull::dangling(),
             capacity: capacity as usize,
             length: 0,
-            phantom: PhantomData,
         }
     }
 
@@ -194,6 +192,20 @@ pub struct VecIntoIter<T> {
     capacity: usize,
 }
 
+pub struct VecIter<'a, T> {
+    reference: *const T,
+    current: usize,
+    size: usize,
+    phantom: PhantomData<&'a T>,
+}
+
+pub struct VecIterMut<'a, T> {
+    reference: *mut T,
+    current: usize,
+    size: usize,
+    phantom: PhantomData<&'a T>,
+}
+
 impl<T> Iterator for VecIntoIter<T> {
     type Item = T;
 
@@ -227,6 +239,34 @@ impl<T> Drop for VecIntoIter<T> {
     }
 }
 
+impl<'a, T> Iterator for VecIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current == self.size {
+            None
+        } else {
+            let i = unsafe { &*self.reference.add(self.current) };
+            self.current += 1;
+            Some(i)
+        }
+    }
+}
+
+impl<'a, T> Iterator for VecIterMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current == self.size {
+            None
+        } else {
+            let i = unsafe { &mut *self.reference.add(self.current) };
+            self.current += 1;
+            Some(i)
+        }
+    }
+}
+
 impl<T> IntoIterator for Vector<T> {
     type Item = T;
     type IntoIter = VecIntoIter<T>;
@@ -241,6 +281,34 @@ impl<T> IntoIterator for Vector<T> {
         self.length = 0;
         self.capacity = 0;
         i
+    }
+}
+
+impl<'a, T> IntoIterator for &'a Vector<T> {
+    type Item = &'a T;
+    type IntoIter = VecIter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        VecIter::<'a, T> {
+            reference: self.start.as_ptr() as *const T,
+            current: 0,
+            size: self.len(),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a mut Vector<T> {
+    type Item = &'a mut T;
+    type IntoIter = VecIterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        VecIterMut::<'a, T> {
+            reference: self.start.as_ptr(),
+            current: 0,
+            size: self.capacity(),
+            phantom: PhantomData,
+        }
     }
 }
 
